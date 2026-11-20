@@ -127,6 +127,7 @@ sudo bash install.sh -y \
 | `--skip-apps` | 完全跳过应用商店和镜像 |
 | `--skip-panel-install` | 只向已有 1Panel 安装/预置应用 |
 | `--skip-docker-install` | 不自动安装 Docker（要求已安装） |
+| `--allow-external-ports` | MySQL/Redis 绑定所有网卡（默认只监听 `127.0.0.1`） |
 | `--no-verify` | 跳过离线包 SHA256 校验 |
 
 > 端口被占用时，安装器会自动选择备用端口（例如 MySQL `13306`、Redis `16379`、OpenResty `8080/8443`），并在最终输出中显示实际端口。

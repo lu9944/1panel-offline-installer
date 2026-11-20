@@ -34,6 +34,7 @@ type installOptions struct {
 	timeout           time.Duration
 	insecure          bool
 	dryRun            bool
+	allowExternal     bool
 	onlyApps          map[string]bool
 }
 
@@ -55,6 +56,7 @@ func runInstall(args []string) int {
 	fsys.DurationVar(&opts.timeout, "timeout", 20*time.Minute, "maximum time to wait for each app")
 	fsys.BoolVar(&opts.insecure, "insecure", false, "skip TLS verification")
 	fsys.BoolVar(&opts.dryRun, "dry-run", false, "print install requests without executing them")
+	fsys.BoolVar(&opts.allowExternal, "allow-external-ports", false, "bind MySQL/Redis ports on all interfaces")
 	only := fsys.String("apps", "", "comma-separated app keys to install (default: all bundled)")
 	if err := fsys.Parse(args); err != nil {
 		return 2
@@ -139,15 +141,15 @@ func runInstall(args []string) int {
 			"appDetailId":  detailID,
 			"params":       params,
 			"name":         key,
-			"advanced":     true,
-			"cpuQuota":     0,
-			"memoryLimit":  0,
-			"memoryUnit":   "M",
-			"allowPort":    false,
-			"editCompose":  false,
-			"pullImage":    false,
-			"gpuConfig":    false,
-			"taskID":       newUUID(),
+			"advanced":      true,
+			"cpuQuota":      0,
+			"memoryLimit":   0,
+			"memoryUnit":    "M",
+			"allowPort":     opts.allowExternal,
+			"editCompose":   false,
+			"pullImage":     false,
+			"gpuConfig":     false,
+			"taskID":        newUUID(),
 			"restartPolicy": "always",
 		}
 		if opts.dryRun {

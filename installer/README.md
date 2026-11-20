@@ -51,6 +51,12 @@ sudo bash install.sh -y \
 
 端口被占用时，安装器会自动选择备用端口，并在最终输出中显示实际值。
 
+MySQL/Redis 默认只监听 `127.0.0.1`。如果需要从其他机器连接数据库，请加：
+
+```bash
+sudo bash install.sh -y --allow-external-ports
+```
+
 ## 查看帮助
 
 ```bash

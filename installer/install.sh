@@ -56,6 +56,7 @@ usage() {
       --skip-images              不加载 Docker 镜像（仅调试用）
       --skip-docker-install      不安装 Docker（要求系统已安装并运行 Docker）
       --skip-panel-install       不安装 1Panel，仅向已有面板预置/安装应用
+      --allow-external-ports     MySQL/Redis 绑定所有网卡（默认仅 127.0.0.1）
 
 其他:
       --no-verify                跳过离线包 SHA256 校验
@@ -279,21 +280,28 @@ read_1pctl_var() {
 }
 
 print_credentials() {
-    local ip
+    local ip db_ip
     ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
     [[ -n "$ip" ]] || ip="127.0.0.1"
+    db_ip="$ip"
+    if [[ "$ALLOW_EXTERNAL_PORTS" != true ]]; then
+        db_ip="127.0.0.1"
+    fi
     printf '1Panel 地址: http://%s:%s/%s\n' "$ip" "$PANEL_PORT" "$PANEL_ENTRANCE"
     printf '1Panel 用户名: %s\n' "$PANEL_USERNAME"
     printf '1Panel 密码: %s\n' "$PANEL_PASSWORD"
     if [[ "$SKIP_APPS" != true ]]; then
         if app_present mysql; then
-            printf 'MySQL 地址: %s:%s  root 密码: %s\n' "$ip" "$MYSQL_PORT" "$MYSQL_PASSWORD"
+            printf 'MySQL 地址: %s:%s  root 密码: %s\n' "$db_ip" "$MYSQL_PORT" "$MYSQL_PASSWORD"
         fi
         if app_present redis; then
-            printf 'Redis 地址: %s:%s  密码: %s\n' "$ip" "$REDIS_PORT" "$REDIS_PASSWORD"
+            printf 'Redis 地址: %s:%s  密码: %s\n' "$db_ip" "$REDIS_PORT" "$REDIS_PASSWORD"
         fi
         if app_present openresty; then
             printf 'OpenResty HTTP/HTTPS: %s:%s / %s:%s\n' "$ip" "$OPENRESTY_HTTP_PORT" "$ip" "$OPENRESTY_HTTPS_PORT"
+        fi
+        if [[ "$ALLOW_EXTERNAL_PORTS" != true ]]; then
+            printf '提示: MySQL/Redis 默认只监听 127.0.0.1；如需局域网访问，请重新执行并加 --allow-external-ports。\n'
         fi
     fi
 }
@@ -329,6 +337,7 @@ SKIP_APPS=false
 SKIP_IMAGES=false
 SKIP_DOCKER_INSTALL=false
 SKIP_VERIFY=false
+ALLOW_EXTERNAL_PORTS=false
 LIST_ONLY=false
 
 while [[ $# -gt 0 ]]; do
@@ -351,6 +360,7 @@ while [[ $# -gt 0 ]]; do
         --skip-apps) SKIP_APPS=true; shift ;;
         --skip-images) SKIP_IMAGES=true; shift ;;
         --skip-docker-install) SKIP_DOCKER_INSTALL=true; shift ;;
+        --allow-external-ports) ALLOW_EXTERNAL_PORTS=true; shift ;;
         --no-verify) SKIP_VERIFY=true; shift ;;
         --list) LIST_ONLY=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -600,6 +610,7 @@ if [[ -n "$MYSQL_PORT" ]]; then install_args+=(--mysql-port "$MYSQL_PORT"); fi
 if [[ -n "$REDIS_PORT" ]]; then install_args+=(--redis-port "$REDIS_PORT"); fi
 if [[ -n "$OPENRESTY_HTTP_PORT" ]]; then install_args+=(--openresty-http-port "$OPENRESTY_HTTP_PORT"); fi
 if [[ -n "$OPENRESTY_HTTPS_PORT" ]]; then install_args+=(--openresty-https-port "$OPENRESTY_HTTPS_PORT"); fi
+if [[ "$ALLOW_EXTERNAL_PORTS" == true ]]; then install_args+=(--allow-external-ports); fi
 "$BUNDLE_DIR/bootstrap/1panel-offline-bootstrap" "${install_args[@]}"
 
 echo
@@ -611,3 +622,6 @@ echo
 echo "提示: 首次登录后可在「应用商店 → 已安装」看到 MySQL / Redis / OpenResty，"
 echo "      MySQL 和 Redis 同时会出现在「数据库」页面。"
 echo "      如目标机器启用了防火墙，请放行面板端口以及 80/443、${MYSQL_PORT}、${REDIS_PORT}。"
+if [[ "$ALLOW_EXTERNAL_PORTS" != true ]]; then
+    echo "      MySQL/Redis 默认仅本机访问；需要局域网访问请加 --allow-external-ports 重新安装。"
+fi
