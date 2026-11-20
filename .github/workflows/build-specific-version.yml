@@ -1,0 +1,70 @@
+name: Build Specific 1Panel Offline Version
+
+run-name: Build 1Panel offline ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '1Panel 版本号（如 v2.5.1 / 2.5.1），或 latest'
+        required: true
+        default: 'latest'
+      mysql_version:
+        description: 'MySQL 版本（留空=最新 8.0.x，例如 8.0.46）'
+        required: false
+        default: ''
+      redis_version:
+        description: 'Redis 版本（留空=最新，例如 8.10.3）'
+        required: false
+        default: ''
+      openresty_version:
+        description: 'OpenResty 版本（留空=最新，例如 1.31.8.1-2-2-noble）'
+        required: false
+        default: ''
+      docker_version:
+        description: 'Docker static 版本（留空=最新）'
+        required: false
+        default: ''
+      compose_version:
+        description: 'Docker Compose 版本（留空=最新）'
+        required: false
+        default: ''
+      release_tag:
+        description: 'Release 标签（留空=offline-<版本>）'
+        required: false
+        default: ''
+      create_release:
+        description: '创建/更新 GitHub Release'
+        type: boolean
+        default: true
+      upload_artifact:
+        description: '不发布 Release 时，上传到 Actions Artifacts'
+        type: boolean
+        default: false
+      run_acceptance:
+        description: '执行真实离线安装验收测试'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: 1panel-offline-specific-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build specified version
+    uses: ./.github/workflows/_build-and-release.yml
+    with:
+      version: ${{ inputs.version }}
+      mysql_version: ${{ inputs.mysql_version }}
+      redis_version: ${{ inputs.redis_version }}
+      openresty_version: ${{ inputs.openresty_version }}
+      docker_version: ${{ inputs.docker_version }}
+      compose_version: ${{ inputs.compose_version }}
+      release_tag: ${{ inputs.release_tag }}
+      create_release: ${{ inputs.create_release }}
+      upload_artifact: ${{ inputs.upload_artifact }}
+      run_acceptance: ${{ inputs.run_acceptance }}

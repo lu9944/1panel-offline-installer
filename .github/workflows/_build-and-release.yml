@@ -1,0 +1,280 @@
+name: Build and Release 1Panel Offline Installer
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      mysql_version:
+        required: false
+        type: string
+        default: ''
+      redis_version:
+        required: false
+        type: string
+        default: ''
+      openresty_version:
+        required: false
+        type: string
+        default: ''
+      docker_version:
+        required: false
+        type: string
+        default: ''
+      compose_version:
+        required: false
+        type: string
+        default: ''
+      fingerprint:
+        required: false
+        type: string
+        default: ''
+      release_tag:
+        required: false
+        type: string
+        default: ''
+      create_release:
+        required: false
+        type: boolean
+        default: true
+      upload_artifact:
+        required: false
+        type: boolean
+        default: false
+      run_acceptance:
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: 1panel-offline-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Linux offline packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+          cache: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq skopeo
+          python3 -m pip install --quiet -r scripts/requirements-build.txt
+
+      - name: Unit tests
+        run: |
+          set -euo pipefail
+          bash -n installer/install.sh
+          python3 -m py_compile scripts/*.py
+          python3 -m unittest discover -s tests -v
+          go test ./cmd/bootstrap
+
+      - name: Build offline packages
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=(
+            --version "${{ inputs.version }}"
+            --arch amd64,arm64
+            --out-dir dist
+            --work-dir .build
+          )
+          if [[ -n "${{ inputs.mysql_version }}" ]]; then args+=(--mysql-version "${{ inputs.mysql_version }}"); fi
+          if [[ -n "${{ inputs.redis_version }}" ]]; then args+=(--redis-version "${{ inputs.redis_version }}"); fi
+          if [[ -n "${{ inputs.openresty_version }}" ]]; then args+=(--openresty-version "${{ inputs.openresty_version }}"); fi
+          if [[ -n "${{ inputs.docker_version }}" ]]; then args+=(--docker-version "${{ inputs.docker_version }}"); fi
+          if [[ -n "${{ inputs.compose_version }}" ]]; then args+=(--compose-version "${{ inputs.compose_version }}"); fi
+          python3 scripts/build-offline-package.py "${args[@]}"
+
+      - name: Show build result
+        run: |
+          ls -lh dist
+          echo
+          cat dist/*.tar.gz.sha256
+          echo
+          cat dist/SHA256SUMS
+
+      - name: Acceptance test (real offline install on amd64)
+        if: ${{ inputs.run_acceptance }}
+        run: |
+          set -euo pipefail
+          archive="$(ls dist/1panel-offline-*-linux-amd64.tar.gz | head -1)"
+          bundle="$(basename "$archive" .tar.gz)"
+          work="$RUNNER_TEMP/acceptance"
+          rm -rf "$work"
+          mkdir -p "$work"
+          tar xzf "$archive" -C "$work"
+          cd "$work/$bundle"
+
+          echo "=== 包信息 ==="
+          bash install.sh --list
+
+          echo "=== 执行真实离线安装 ==="
+          sudo bash install.sh -y \
+            --port 30080 \
+            --entrance accept123 \
+            --username admin \
+            --password 'Accept123456' \
+            --mysql-port 33306 \
+            --redis-port 36379 \
+            --openresty-http-port 38080 \
+            --openresty-https-port 38443
+
+          echo "=== 验证应用状态 ==="
+          sudo "./bootstrap/1panel-offline-bootstrap" verify \
+            --base-dir /opt \
+            --meta "./meta/apps.json"
+
+          echo "=== 服务与容器 ==="
+          sudo 1pctl status
+          sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+
+      - name: Acceptance failure diagnostics
+        if: failure()
+        run: |
+          echo "=== 1Panel services ==="
+          sudo systemctl status 1panel-core 1panel-agent --no-pager || true
+          echo "=== Docker ==="
+          sudo docker ps -a || true
+          sudo journalctl -u docker -n 120 --no-pager || true
+          echo "=== 1Panel logs ==="
+          sudo tail -n 200 /opt/1panel/log/1Panel.log || true
+          sudo tail -n 200 /opt/1panel/log/1Panel-Core.log || true
+          echo "=== task logs ==="
+          sudo find /opt/1panel/log/task -type f -maxdepth 2 -print -exec tail -n 80 {} \; || true
+
+      - name: Upload artifacts
+        if: ${{ !inputs.create_release && inputs.upload_artifact }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: 1panel-offline-${{ inputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/SHA256SUMS
+          retention-days: 14
+
+      - name: Create or update release
+        if: ${{ inputs.create_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          version="${{ inputs.version }}"
+          build_info="dist/BUILD_INFO-amd64"
+          if [[ -f "$build_info" ]]; then
+            resolved_version="$(sed -n 's/^version=//p' "$build_info")"
+            [[ -n "$resolved_version" ]] && version="$resolved_version"
+          fi
+          tag="${{ inputs.release_tag }}"
+          [[ -n "$tag" ]] || tag="offline-${version}"
+
+          app_summary="MySQL 8.0 · Redis · OpenResty"
+          docker_version=""
+          compose_version=""
+          if [[ -f "$build_info" ]]; then
+            app_summary="$(sed -n 's/^apps=//p' "$build_info")"
+            docker_version="$(sed -n 's/^docker_version=//p' "$build_info")"
+            compose_version="$(sed -n 's/^compose_version=//p' "$build_info")"
+          fi
+          fingerprint="${{ inputs.fingerprint }}"
+
+          archive_amd64="$(ls dist/1panel-offline-*-linux-amd64.tar.gz | head -1)"
+          archive_arm64="$(ls dist/1panel-offline-*-linux-arm64.tar.gz | head -1)"
+
+          cat > release-notes.md <<EOF
+          ## 1Panel ${version} 离线安装包（Linux）
+
+          包含完整离线安装能力：
+
+          - 1Panel ${version}（内置 x86_64 / aarch64 面板程序）
+          - 离线 Docker ${docker_version:-static} + Docker Compose ${compose_version:-}
+          - 应用商店应用：${app_summary}
+          - MySQL 8.0、Redis、OpenResty 的 Docker 镜像已预加载到安装包中
+
+          ### 安装
+
+              tar xzf $(basename "$archive_amd64")
+              cd $(basename "$archive_amd64" .tar.gz)
+              sudo bash install.sh
+
+          安装完成后会自动完成：
+
+          1. 安装并启动 1Panel；
+          2. 加载 MySQL / Redis / OpenResty 镜像；
+          3. 在 1Panel 应用商店注册应用；
+          4. 自动安装 MySQL 8.0、Redis、OpenResty；
+          5. 在「应用商店 → 已安装」和「数据库」页面展示。
+
+          面板地址、用户名、密码以及数据库密码会写入 `/root/1panel-offline-credentials.txt`。
+
+          ### 文件
+
+          | 架构 | 文件 |
+          | --- | --- |
+          | x86_64 | `$(basename "$archive_amd64")` |
+          | aarch64 | `$(basename "$archive_arm64")` |
+
+          校验：
+
+              sha256sum -c SHA256SUMS
+
+          <!-- offline-fingerprint:${fingerprint} -->
+          EOF
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.tar.gz dist/*.sha256 dist/SHA256SUMS --clobber
+            gh release edit "$tag" \
+              --title "1Panel ${version} 离线安装包（Linux）" \
+              --notes-file release-notes.md
+          else
+            gh release create "$tag" \
+              --title "1Panel ${version} 离线安装包（Linux）" \
+              --notes-file release-notes.md
+            gh release upload "$tag" dist/*.tar.gz dist/*.sha256 dist/SHA256SUMS --clobber
+          fi
+          gh release edit "$tag" --draft=false --latest
+          echo "Release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag"
+
+      - name: Job summary
+        run: |
+          {
+            echo "## 1Panel ${inputs.version} 离线安装包"
+            echo
+            echo '```'
+            ls -lh dist
+            echo
+            cat dist/*.tar.gz.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,94 @@
+name: Build Latest 1Panel Offline Installer
+
+run-name: Build latest 1Panel offline installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: '即使当前版本已经发布过，也强制重新构建'
+        type: boolean
+        default: false
+      create_release:
+        description: '创建/更新 GitHub Release'
+        type: boolean
+        default: true
+      upload_artifact:
+        description: '不发布 Release 时，上传到 Actions Artifacts'
+        type: boolean
+        default: false
+      run_acceptance:
+        description: '执行真实离线安装验收测试（会拉取并启动 MySQL/Redis/OpenResty）'
+        type: boolean
+        default: true
+  schedule:
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    name: Resolve latest upstream versions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      mysql_version: ${{ steps.resolve.outputs.mysql_version }}
+      redis_version: ${{ steps.resolve.outputs.redis_version }}
+      openresty_version: ${{ steps.resolve.outputs.openresty_version }}
+      docker_version: ${{ steps.resolve.outputs.docker_version }}
+      compose_version: ${{ steps.resolve.outputs.compose_version }}
+      fingerprint: ${{ steps.resolve.outputs.fingerprint }}
+      should_build: ${{ steps.resolve.outputs.should_build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: python3 -m pip install --quiet -r scripts/requirements-build.txt
+
+      - name: Resolve versions and fingerprint
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REQUESTED_VERSION: latest
+          FORCE_REBUILD: ${{ inputs.force_rebuild || 'false' }}
+        run: python3 scripts/check-latest.py
+
+      - name: Summary
+        run: |
+          {
+            echo "## 最新版本检查"
+            echo
+            echo "- 1Panel：\`${{ steps.resolve.outputs.version }}\`"
+            echo "- MySQL：\`${{ steps.resolve.outputs.mysql_version }}\`"
+            echo "- Redis：\`${{ steps.resolve.outputs.redis_version }}\`"
+            echo "- OpenResty：\`${{ steps.resolve.outputs.openresty_version }}\`"
+            echo "- Docker：\`${{ steps.resolve.outputs.docker_version }}\`"
+            echo "- Compose：\`${{ steps.resolve.outputs.compose_version }}\`"
+            echo "- 需要构建：\`${{ steps.resolve.outputs.should_build }}\`"
+            echo "- 指纹：\`${{ steps.resolve.outputs.fingerprint }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build and release
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    uses: ./.github/workflows/_build-and-release.yml
+    with:
+      version: ${{ needs.resolve.outputs.version }}
+      mysql_version: ${{ needs.resolve.outputs.mysql_version }}
+      redis_version: ${{ needs.resolve.outputs.redis_version }}
+      openresty_version: ${{ needs.resolve.outputs.openresty_version }}
+      docker_version: ${{ needs.resolve.outputs.docker_version }}
+      compose_version: ${{ needs.resolve.outputs.compose_version }}
+      fingerprint: ${{ needs.resolve.outputs.fingerprint }}
+      create_release: ${{ github.event_name == 'schedule' || inputs.create_release }}
+      upload_artifact: ${{ inputs.upload_artifact || false }}
+      run_acceptance: ${{ github.event_name == 'schedule' || inputs.run_acceptance }}

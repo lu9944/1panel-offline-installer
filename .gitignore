@@ -1,0 +1,11 @@
+dist/
+.build/
+.build-*/
+*.tar.gz
+*.zip
+*.tar
+*.sha256
+bootstrap-bin/
+
+__pycache__/
+*.pyc
