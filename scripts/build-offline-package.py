@@ -569,9 +569,13 @@ def repo_revision() -> str:
 
 
 def fingerprint(meta: dict, docker_version: str, compose_version: str, appstore_commit: str) -> str:
+    # Only versions that affect the produced package participate in the
+    # fingerprint. The app-store commit is recorded separately; using it here
+    # would rebuild the 1.6 GB package every time any unrelated upstream app
+    # changes.
     app_versions = ",".join(f"{app['key']}:{app['version']}" for app in meta["apps"])
     material = "|".join([
-        meta["bundleVersion"], app_versions, docker_version, compose_version, appstore_commit, repo_revision(),
+        meta["bundleVersion"], app_versions, docker_version, compose_version, repo_revision(),
     ])
     return hashlib.sha256(material.encode()).hexdigest()
 
