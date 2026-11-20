@@ -209,24 +209,29 @@ jobs:
             compose_version="$(sed -n 's/^compose_version=//p' "$build_info")"
           fi
           fingerprint="${{ inputs.fingerprint }}"
+          docker_display="${docker_version:-static}"
+          compose_display="${compose_version:-latest}"
 
           archive_amd64="$(ls dist/1panel-offline-*-linux-amd64.tar.gz | head -1)"
           archive_arm64="$(ls dist/1panel-offline-*-linux-arm64.tar.gz | head -1)"
+          amd64_name="$(basename "$archive_amd64")"
+          amd64_dir="$(basename "$archive_amd64" .tar.gz)"
+          arm64_name="$(basename "$archive_arm64")"
 
-          cat > release-notes.md <<EOF
-          ## 1Panel ${version} 离线安装包（Linux）
+          cat > release-notes.md <<'EOF'
+          ## 1Panel __VERSION__ 离线安装包（Linux）
 
           包含完整离线安装能力：
 
-          - 1Panel ${version}（内置 x86_64 / aarch64 面板程序）
-          - 离线 Docker ${docker_version:-static} + Docker Compose ${compose_version:-}
-          - 应用商店应用：${app_summary}
+          - 1Panel __VERSION__（内置 x86_64 / aarch64 面板程序）
+          - 离线 Docker __DOCKER__ + Docker Compose __COMPOSE__
+          - 应用商店应用：__APPS__
           - MySQL 8.0、Redis、OpenResty 的 Docker 镜像已预加载到安装包中
 
           ### 安装
 
-              tar xzf $(basename "$archive_amd64")
-              cd $(basename "$archive_amd64" .tar.gz)
+              tar xzf __AMD64_NAME__
+              cd __AMD64_DIR__
               sudo bash install.sh
 
           安装完成后会自动完成：
@@ -243,15 +248,26 @@ jobs:
 
           | 架构 | 文件 |
           | --- | --- |
-          | x86_64 | `$(basename "$archive_amd64")` |
-          | aarch64 | `$(basename "$archive_arm64")` |
+          | x86_64 | `__AMD64_NAME__` |
+          | aarch64 | `__ARM64_NAME__` |
 
           校验：
 
               sha256sum -c SHA256SUMS
 
-          <!-- offline-fingerprint:${fingerprint} -->
+          <!-- offline-fingerprint:__FINGERPRINT__ -->
           EOF
+
+          sed -i \
+            -e "s|__VERSION__|${version}|g" \
+            -e "s|__DOCKER__|${docker_display}|g" \
+            -e "s|__COMPOSE__|${compose_display}|g" \
+            -e "s|__APPS__|${app_summary}|g" \
+            -e "s|__AMD64_NAME__|${amd64_name}|g" \
+            -e "s|__AMD64_DIR__|${amd64_dir}|g" \
+            -e "s|__ARM64_NAME__|${arm64_name}|g" \
+            -e "s|__FINGERPRINT__|${fingerprint}|g" \
+            release-notes.md
 
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/*.tar.gz dist/*.sha256 dist/SHA256SUMS --clobber
@@ -269,8 +285,10 @@ jobs:
 
       - name: Job summary
         run: |
+          version="$(sed -n 's/^version=//p' dist/BUILD_INFO-amd64 2>/dev/null | head -1)"
+          [[ -n "$version" ]] || version="${{ inputs.version }}"
           {
-            echo "## 1Panel ${inputs.version} 离线安装包"
+            echo "## 1Panel ${version} 离线安装包"
             echo
             echo '```'
             ls -lh dist
